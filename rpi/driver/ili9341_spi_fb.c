@@ -18,12 +18,9 @@
 
 #define ORIENTATION 1 //0=LANDSCAPE 1=PORTRAIT
 
-#define DISPLAY_WIDTH  ILI9341_PIXEL_WIDTH
-#define DISPLAY_HEIGHT ILI9341_PIXEL_HEIGHT
-
 #define DISPLAY_BPP 16
 
-static lcdPropertiesTypeDef lcdProperties = {ILI9341_PIXEL_WIDTH, ILI9341_PIXEL_HEIGHT, LCD_ORIENTATION_PORTRAIT, 1, 1};
+static lcd_properties_t lcd_properties = {ILI9341_PIXEL_WIDTH, ILI9341_PIXEL_HEIGHT, LCD_ORIENTATION_PORTRAIT, 1, 1};
 
 
 void lcdSetCursorPosition(unsigned short x0, unsigned short y0, unsigned short x1, unsigned short y1)
@@ -45,38 +42,31 @@ static void ili9341_update_display(const struct fb_info *info)
 {
   printk(KERN_INFO "fb%d: ili9341_update_display\n", info->node);
   int x, y;
-  lcdSetCursorPosition(0, 0, lcdProperties.width - 1, lcdProperties.height - 1);
+  u16 line;
+  lcdSetCursorPosition(0, 0, lcd_properties.width - 1, lcd_properties.height - 1);
   
-  if (ORIENTATION == 0)
+  if (LCD_ORIENTATION_PORTRAIT == lcd_properties.orientation)
   {
-    for (y = 0; y < DISPLAY_WIDTH; y++)
+    for (y = 0; y < lcd_properties.width; y++)
     {
-      for (x = 0; x < DISPLAY_HEIGHT; x++)
+      for (x = 0; x < lcd_properties.height; x++)
       {
-        spi_bus_write_data(info->screen_base[(x * (2 * DISPLAY_WIDTH)) + (y * 2) + 1]);
-        //spi_bus_write_data(info->screen_base[(x * (2 * DISPLAY_WIDTH)) + (y * 2) + 2]);
+        line = ((info->screen_base[(x * (2 * lcd_properties.width)) + (y * 2) + 1]) << 8) |
+                (info->screen_base[(x * (2 * lcd_properties.width)) + (y * 2) + 2]);
+        spi_bus_write_data(line);
       }
     }
   }
   else
   {
-    for (y = (DISPLAY_HEIGHT); y >= 0; y--)
+    for (y = lcd_properties.height; y >= 0; y--)
     {
-      // for (x = 0; x < DISPLAY_WIDTH; x++)
-      // {
-      //   unsigned short line =  ((info->screen_base[(y * (2 * DISPLAY_WIDTH)) + (x*2) + 1]) << 8) | 
-      //                           (info->screen_base[(y * (2 * DISPLAY_WIDTH)) + (x*2) + 2]);
-
-      //   //spi_bus_write_data(line);
-      // }
-      u8 buff[DISPLAY_WIDTH] = {0};
-      for (x = 0; x < DISPLAY_WIDTH; x++)
+      for (x = 0; x < lcd_properties.width; x++)
       {
-        buff[x] =  (info->screen_base[(y * (2 * DISPLAY_WIDTH)) + (x*2) + 1]);
-
-        //spi_bus_write_data(line);
+        line = ((info->screen_base[(y * (2 * lcd_properties.width)) + (x*2) + 1]) << 8) | 
+                (info->screen_base[(y * (2 * lcd_properties.width)) + (x*2) + 2]);
+        spi_bus_write_data(line);
       }
-      spi_bus_write_data_array(buff, DISPLAY_WIDTH);
     }
   }
 }
@@ -173,30 +163,30 @@ static struct fb_fix_screeninfo ili9341_fix = {
 };
 
 static struct fb_var_screeninfo ili9341_var = {
-    .width = DISPLAY_WIDTH,
-    .height = DISPLAY_HEIGHT,
+    .width          =  ILI9341_PIXEL_WIDTH,
+    .height         = ILI9341_PIXEL_HEIGHT,
     .bits_per_pixel = DISPLAY_BPP,
-    .xres = DISPLAY_WIDTH,
-    .yres = DISPLAY_HEIGHT,
-    .xres_virtual = DISPLAY_WIDTH,
-    .yres_virtual = DISPLAY_HEIGHT,
-    .activate = FB_ACTIVATE_NOW,
-    .vmode = FB_VMODE_NONINTERLACED,
+    .xres           = ILI9341_PIXEL_WIDTH,
+    .yres           = ILI9341_PIXEL_HEIGHT,
+    .xres_virtual   = ILI9341_PIXEL_WIDTH,
+    .yres_virtual   = ILI9341_PIXEL_HEIGHT,
+    .activate       = FB_ACTIVATE_NOW,
+    .vmode          = FB_VMODE_NONINTERLACED,
 
-    .red = {11, 5, 0},
+    .red   = {11, 5, 0},
     .green = {5, 6, 0},
-    .blue = {0, 5, 0},
+    .blue  = {0, 5, 0},
 };
 
 static struct fb_ops ili9341_ops = {
     .owner = THIS_MODULE,
     //.fb_read = fb_sys_read,
-    .fb_write = ili9341_write,
-    .fb_fillrect = ili9341_fillrect,
-    .fb_copyarea = ili9341_copyarea,
+    .fb_write     = ili9341_write,
+    .fb_fillrect  = ili9341_fillrect,
+    .fb_copyarea  = ili9341_copyarea,
     .fb_imageblit = ili9341_imageblit,
     //.fb_setcolreg = ili9341_setcolreg,
-    .fb_blank = ili9341_blank,
+    .fb_blank     = ili9341_blank,
 };
 
 
@@ -208,94 +198,79 @@ static struct fb_deferred_io ili9341_defio = {
 
 enum
 {
-  MemoryAccessControlNormalOrder,
-  MemoryAccessControlReverseOrder
+  REFRESH_ORDER_NORMAL = 0,
+  REFRESH_ORDER_REVERSE
 } MemoryAccessControlRefreshOrder;
 
 enum
 {
-  MemoryAccessControlColorOrderRGB,
-  MemoryAccessControlColorOrderBGR
+  COLOR_ORDER_RGB = 0,
+  COLOR_ORDER_BGR
 } MemoryAccessControlColorOrder;
 
 
-static unsigned char lcdPortraitConfig = 0;
-static unsigned char lcdLandscapeConfig = 0;
-static unsigned char lcdPortraitMirrorConfig = 0;
-static unsigned char lcdLandscapeMirrorConfig = 0;
+enum
+{
+  CFG_PORTRAIT = 0,
+  CFG_LANDSCAPE,
+  CFG_PORTRAIT_MIRORED,
+  CFG_LANDSCAPE_MIRORED,
+  CFG_COUNT
+};
+
+struct disp_cfg {
+  u8 rowAddressOrder;
+  u8 columnAddressOrder;
+  u8 rowColumnExchange;
+  u8 verticalRefreshOrder;
+  u8 colorOrder;
+  u8 horizontalRefreshOrder;
+};
+
+#define CFG_INIT(a,b,c,d,e,f)\
+{\
+  .rowAddressOrder  = a,\
+  .columnAddressOrder = b,\
+  .rowColumnExchange = c,\
+  .verticalRefreshOrder = d,\
+  .colorOrder = e,\
+  .horizontalRefreshOrder = f\
+}
+
+static const struct disp_cfg display_config[CFG_COUNT] = 
+{  // rowAddressOrder      columnAddressOrder     rowColumnExchange      verticalRefreshOrder  colorOrder      horizontalRefreshOrder
+  CFG_INIT(REFRESH_ORDER_REVERSE, REFRESH_ORDER_REVERSE, REFRESH_ORDER_NORMAL,  REFRESH_ORDER_NORMAL, COLOR_ORDER_BGR, REFRESH_ORDER_NORMAL),
+  CFG_INIT(REFRESH_ORDER_NORMAL,  REFRESH_ORDER_NORMAL,  REFRESH_ORDER_REVERSE, REFRESH_ORDER_NORMAL, COLOR_ORDER_BGR, REFRESH_ORDER_NORMAL),
+  CFG_INIT(REFRESH_ORDER_REVERSE, REFRESH_ORDER_NORMAL,  REFRESH_ORDER_NORMAL,  REFRESH_ORDER_NORMAL, COLOR_ORDER_BGR, REFRESH_ORDER_NORMAL),
+  CFG_INIT(REFRESH_ORDER_REVERSE, REFRESH_ORDER_REVERSE, REFRESH_ORDER_REVERSE, REFRESH_ORDER_NORMAL, COLOR_ORDER_BGR, REFRESH_ORDER_NORMAL),
+};
 
 // *****************************************************************************
 // Functions prototypes
 // *****************************************************************************
 
-static unsigned char lcdBuildMemoryAccessControlConfig(
-    bool rowAddressOrder,
-    bool columnAddressOrder,
-    bool rowColumnExchange,
-    bool verticalRefreshOrder,
-    bool colorOrder,
-    bool horizontalRefreshOrder)
+static unsigned char ili9341_display_cfg(struct disp_cfg cfg)
 {
   unsigned char value = 0;
-  if (horizontalRefreshOrder)
+  if (cfg.horizontalRefreshOrder)
     value |= ILI9341_MADCTL_MH;
-  if (colorOrder)
+  if (cfg.colorOrder)
     value |= ILI9341_MADCTL_BGR;
-  if (verticalRefreshOrder)
+  if (cfg.verticalRefreshOrder)
     value |= ILI9341_MADCTL_ML;
-  if (rowColumnExchange)
+  if (cfg.rowColumnExchange)
     value |= ILI9341_MADCTL_MV;
-  if (columnAddressOrder)
+  if (cfg.columnAddressOrder)
     value |= ILI9341_MADCTL_MX;
-  if (rowAddressOrder)
+  if (cfg.rowAddressOrder)
     value |= ILI9341_MADCTL_MY;
   return value;
 }
 
 void ili9341_Init(void)
 {
-  // lcdPortraitConfig = lcdBuildMemoryAccessControlConfig(
-  //     MemoryAccessControlNormalOrder,   // rowAddressOrder
-  //     MemoryAccessControlReverseOrder,  // columnAddressOrder
-  //     MemoryAccessControlNormalOrder,   // rowColumnExchange
-  //     MemoryAccessControlNormalOrder,   // verticalRefreshOrder
-  //     MemoryAccessControlColorOrderBGR, // colorOrder
-  //     MemoryAccessControlNormalOrder);  // horizontalRefreshOrder
-
-
-
-    lcdPortraitConfig = lcdBuildMemoryAccessControlConfig(
-      MemoryAccessControlReverseOrder,   // rowAddressOrder
-      MemoryAccessControlReverseOrder,  // columnAddressOrder
-      MemoryAccessControlNormalOrder,   // rowColumnExchange
-      MemoryAccessControlNormalOrder,   // verticalRefreshOrder
-      MemoryAccessControlColorOrderBGR, // colorOrder
-      MemoryAccessControlNormalOrder);  // horizontalRefreshOrder    
-
-  lcdLandscapeConfig = lcdBuildMemoryAccessControlConfig(
-      MemoryAccessControlNormalOrder,   // rowAddressOrder
-      MemoryAccessControlNormalOrder,   // columnAddressOrder
-      MemoryAccessControlReverseOrder,  // rowColumnExchange
-      MemoryAccessControlNormalOrder,   // verticalRefreshOrder
-      MemoryAccessControlColorOrderBGR, // colorOrder
-      MemoryAccessControlNormalOrder);  // horizontalRefreshOrder
-
-  lcdPortraitMirrorConfig = lcdBuildMemoryAccessControlConfig(
-      MemoryAccessControlReverseOrder,  // rowAddressOrder
-      MemoryAccessControlNormalOrder,   // columnAddressOrder
-      MemoryAccessControlNormalOrder,   // rowColumnExchange
-      MemoryAccessControlNormalOrder,   // verticalRefreshOrder
-      MemoryAccessControlColorOrderBGR, // colorOrder
-      MemoryAccessControlNormalOrder);  // horizontalRefreshOrder
-
-  lcdLandscapeMirrorConfig = lcdBuildMemoryAccessControlConfig(
-      MemoryAccessControlReverseOrder,  // rowAddressOrder
-      MemoryAccessControlReverseOrder,  // columnAddressOrder
-      MemoryAccessControlReverseOrder,  // rowColumnExchange
-      MemoryAccessControlNormalOrder,   // verticalRefreshOrder
-      MemoryAccessControlColorOrderBGR, // colorOrder
-      MemoryAccessControlNormalOrder);  // horizontalRefreshOrder
-
+  u8 disp_cfg = ili9341_display_cfg(display_config[CFG_PORTRAIT]);
+   
   spi_bus_write_cmd(ILI9341_SOFTRESET);
   mdelay(120);
 
@@ -345,8 +320,7 @@ void ili9341_Init(void)
   spi_bus_write_data(0xBE);
 
   spi_bus_write_cmd(ILI9341_MEMCONTROL);
-  spi_bus_write_data(lcdPortraitConfig);
-  //spi_bus_write_data(lcdPortraitMirrorConfig);
+  spi_bus_write_data(disp_cfg);
 
   spi_bus_write_cmd(ILI9341_PIXELFORMAT);
   spi_bus_write_data(0x55);
@@ -426,28 +400,28 @@ void ili9341_Init(void)
 
 void ili9341_Test(void)
 {
-  lcdSetCursorPosition(0, 0, lcdProperties.width - 1, lcdProperties.height - 1);
+  lcdSetCursorPosition(0, 0, lcd_properties.width - 1, lcd_properties.height - 1);
 
-  char stripSize = lcdProperties.height / 8;
+  char stripSize = lcd_properties.height / 8;
   int y = 0;
-  for (; y < lcdProperties.height; y++)
+  for (; y < lcd_properties.height; y++)
   {
     int x = 0;
-    for (; x < lcdProperties.width; x++)
+    for (; x < lcd_properties.width; x++)
     {
-      if (y > lcdProperties.height - 1 - (stripSize * 1))
+      if (y > lcd_properties.height - 1 - (stripSize * 1))
         spi_bus_write_data(COLOR_WHITE);
-      else if (y > lcdProperties.height - 1 - (stripSize * 2))
+      else if (y > lcd_properties.height - 1 - (stripSize * 2))
         spi_bus_write_data(COLOR_BLUE);
-      else if (y > lcdProperties.height - 1 - (stripSize * 3))
+      else if (y > lcd_properties.height - 1 - (stripSize * 3))
         spi_bus_write_data(COLOR_GREEN);
-      else if (y > lcdProperties.height - 1 - (stripSize * 4))
+      else if (y > lcd_properties.height - 1 - (stripSize * 4))
         spi_bus_write_data(COLOR_CYAN);
-      else if (y > lcdProperties.height - 1 - (stripSize * 5))
+      else if (y > lcd_properties.height - 1 - (stripSize * 5))
         spi_bus_write_data(COLOR_RED);
-      else if (y > lcdProperties.height - 1 - (stripSize * 6))
+      else if (y > lcd_properties.height - 1 - (stripSize * 6))
         spi_bus_write_data(COLOR_MAGENTA);
-      else if (y > lcdProperties.height - 1 - (stripSize * 7))
+      else if (y > lcd_properties.height - 1 - (stripSize * 7))
         spi_bus_write_data(COLOR_YELLOW);
       else
         spi_bus_write_data(COLOR_BLACK);
@@ -486,10 +460,6 @@ static int ili9341_probe(struct platform_device *pdev)
   info->flags = FBINFO_DEFAULT | FBINFO_VIRTFB;
 
   info->fbdefio = &ili9341_defio;
-  // if (0 < fps)
-  // {
-  //   info->fbdefio->delay = HZ / fps;
-  // }
 
   fb_deferred_io_init(info);
 
@@ -516,7 +486,7 @@ static int ili9341_probe(struct platform_device *pdev)
   platform_set_drvdata(pdev, info);
 
   ili9341_Init();
-  //ili9341_Test();
+  ili9341_Test();
 
   printk(KERN_INFO "fb%d: ili9341 LCD framebuffer device\n", info->node);
   return 0;

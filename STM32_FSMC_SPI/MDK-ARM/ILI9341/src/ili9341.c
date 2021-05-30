@@ -15,7 +15,7 @@ enum {
 } MemoryAccessControlRefreshOrder;
 
 enum {
-  MemoryAccessControlColorOrderRGB,
+  COLOR_ORDER_RGB,
   MemoryAccessControlColorOrderBGR
 } MemoryAccessControlColorOrder;
 
